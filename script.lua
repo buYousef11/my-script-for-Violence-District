@@ -1521,6 +1521,7 @@ G.ObjectTypes = {
     {key = "MeatHook", env = true, color = Color3.fromRGB(255, 70, 70), contains = {"meathook", "hook"}},
     {key = "BreakableWall", env = false, color = Color3.fromRGB(210, 210, 210), contains = {"breakablewall"}},
     {key = "Item", env = false, color = Color3.fromRGB(255, 255, 255), exact = {"item"}},
+    {key = "Pumpkin", env = true, color = Color3.fromRGB(255, 140, 20), contains = {"pumpkin", "pumking", "jackolantern", "jack_o_lantern"}},
     {key = "Traps", env = false, color = Color3.fromRGB(255, 60, 60), contains = {"trap"}},
     {key = "CenobiteBox", env = false, color = Color3.fromRGB(255, 80, 200), contains = {"cenobite", "lamentbox", "puzzlebox"}},
     {key = "ConjoinedTwin", env = false, color = Color3.fromRGB(255, 120, 120), contains = {"conjoined", "twin"}},
@@ -2750,8 +2751,7 @@ function G.buildSettings()
 
     local elCard = G.newCard(tl, "txt.title", G.menuLabels)
     local elItems = {
-        {id = "pname", key = "txt.pname"}, {id = "pdist", key = "txt.pdist"},
-        {id = "oname", key = "txt.oname"}, {id = "odist", key = "txt.odist"}
+        {id = "pname", key = "txt.pname"}, {id = "pdist", key = "txt.pdist"}, {id = "odist", key = "txt.odist"}
     }
     local refreshElPills = G.createPills(elCard, elItems, function() return selEl end, function(id)
         selEl = id
@@ -3218,7 +3218,7 @@ end
 function G.clearObjectState(e)
     local st = G.ostate[e]
     if st then
-        G.destroyLabel(st.nameLbl)
+        if st.highlight then pcall(function() st.highlight:Destroy() end) end
         G.destroyLabel(st.distLbl)
         G.ostate[e] = nil
     end
@@ -3498,7 +3498,7 @@ end
 G.objPriority = {
     "BreakableWall", "CenobiteBox", "ConjoinedTwin", "EscapeDoor", "MeatHook",
     "Generator", "Pallet", "Window", "Totem", "Hatch", "Breakable", "Locker",
-    "Traps", "Zombie", "Drone", "Item", "Guard", "Dog"
+    "Pumpkin", "Traps", "Zombie", "Drone", "Item", "Guard", "Dog"
 }
 
 function G.classifyObject(name)
@@ -3575,6 +3575,12 @@ function G.pickAnchor(inst)
     return best
 end
 
+-- الشيء اللي نحط عليه Highlight: الموديل نفسه إذا كان موديل (يضيء الشكل كامل)، أو القطعة إذا كانت قطعة مفردة
+function G.pickAdornee(inst)
+    if inst:IsA("Model") then return inst end
+    return inst
+end
+
 -- حلقة بطيئة (0.25 ثانية): نختار الأقرب ضمن النطاق ونجهّز نصوصه
 G.objAcc = 0
 track(RunService.Heartbeat:Connect(function(dt)
@@ -3626,24 +3632,38 @@ track(RunService.Heartbeat:Connect(function(dt)
 
             local fade = math.clamp((c.d - range * 0.55) / (range * 0.45), 0, 0.65)
 
-            if not st.nameLbl then st.nameLbl = G.newOverlayLabel() end
-            local nm = T("obj." .. c.ot.key)
-            if G.TextCfg.oname.spaced and G.currentLang ~= "ar" then nm = G.spaceText(nm) end
-            G.setText(st.nameLbl, nm)
-            st.nameLbl.TextColor3 = G.ObjState.color[c.ot.key]
-            G.ensureStyle(st.nameLbl, G.TextCfg.oname)
-            st.nameLbl.TextTransparency = math.clamp(G.labelMeta[st.nameLbl].baseT + fade, 0, 0.95)
+            -- تحديد (Highlight) على الغرض نفسه بدل نص عائم، يظهر خلف الجدران أيضاً
+            -- كل غرض بمحاولة مستقلة (pcall): لو غرض واحد فشل، الباقي يكمل عادي ومايعلّق الكشف كله
+            pcall(function()
+                local col = G.ObjState.color[c.ot.key]
+                if not st.highlight or not st.highlight.Parent then
+                    st.highlight = Instance.new("Highlight")
+                    st.highlight.Name = "Fast_OBJ_HL"
+                    st.highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                    st.highlight.Parent = e.inst
+                end
+                -- نثبّت الـ Adornee على القطعة نفسها (مو الموديل كامل) عشان التحديد يطابق شكل الغرض بس
+                -- وما يلخبط معه جدار أو باب ملاصق له داخل نفس الموديل
+                local adornee = e.part or e.inst
+                if st.highlight.Adornee ~= adornee then st.highlight.Adornee = adornee end
+                st.highlight.FillColor = col
+                st.highlight.OutlineColor = col
+                st.highlight.FillTransparency = math.clamp(0.75 + fade * 0.2, 0, 0.97)
+                st.highlight.OutlineTransparency = math.clamp(0.1 + fade * 0.3, 0, 0.9)
+            end)
 
-            if G.ObjState.showDist then
-                if not st.distLbl then st.distLbl = G.newOverlayLabel() end
-                G.setText(st.distLbl, G.fmtDist(G.TextCfg.odist.format, math.floor(c.d)))
-                st.distLbl.TextColor3 = C.White
-                G.ensureStyle(st.distLbl, G.TextCfg.odist)
-                st.distLbl.TextTransparency = math.clamp(G.labelMeta[st.distLbl].baseT + fade, 0, 0.95)
-            elseif st.distLbl then
-                G.destroyLabel(st.distLbl)
-                st.distLbl = nil
-            end
+            pcall(function()
+                if G.ObjState.showDist then
+                    if not st.distLbl then st.distLbl = G.newOverlayLabel() end
+                    G.setText(st.distLbl, G.fmtDist(G.TextCfg.odist.format, math.floor(c.d)))
+                    st.distLbl.TextColor3 = C.White
+                    G.ensureStyle(st.distLbl, G.TextCfg.odist)
+                    st.distLbl.TextTransparency = math.clamp(G.labelMeta[st.distLbl].baseT + fade, 0, 0.95)
+                elseif st.distLbl then
+                    G.destroyLabel(st.distLbl)
+                    st.distLbl = nil
+                end
+            end)
         end
 
         for e in pairs(G.ostate) do
